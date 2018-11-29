@@ -121,7 +121,7 @@ Resize Observer¹          |     ✅ |     ✅ |        🚧 |         🚧 |   
 Custom Elements           |     ✅ |     ✅ |        ✅ |         🚧 |         🚧 |    🚧 |   🚧
 Shadow DOM                |     ✅ |     ✅ |        ✅ |         ✅ |         🚧 |    🚧 |   🚧
 Intersection Observer     |     ✅ |     ✅ |        🚧 |         ✅ |         ✅ |    ✅ |   🚧
-Fullscreen API            |     🚧 |     ✅ |        🚧 |         🚧 |         🚧 |    🚧 |   🚧
+Fullscreen API            |     ✅ |     ✅ |        🚧 |         ✅ |         🚧 |    🚧 |   🚧
 WebXR Device API          |     🚫 |     🎌 |        🚫 |         🚫 |         🚫 |    🚫 |   🚫
 WebXR HitTest API         |     🚫 |     🎌 |        🚫 |         🚫 |         🚫 |    🚫 |   🚫
 
