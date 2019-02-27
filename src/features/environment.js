@@ -13,9 +13,10 @@
  * limitations under the License.
  */
 
-import {BackSide, BoxBufferGeometry, Color, Mesh, ShaderLib, ShaderMaterial, UniformsUtils} from 'three';
+import {ACESFilmicToneMapping, BackSide, BoxBufferGeometry, CineonToneMapping, Color, LinearToneMapping, Mesh, NoToneMapping, ReinhardToneMapping, ShaderLib, ShaderMaterial, Uncharted2ToneMapping, UniformsUtils} from 'three';
 
 import {$needsRender, $onModelLoad, $renderer, $scene, $tick} from '../model-viewer-base.js';
+import {BASE_SHADOW_OPACITY} from '../three-components/StaticShadow.js';
 
 const DEFAULT_BACKGROUND_COLOR = '#ffffff';
 
@@ -30,16 +31,53 @@ const $hasBackgroundImage = Symbol('hasBackgroundImage');
 const $hasBackgroundColor = Symbol('hasBackgroundColor');
 const $deallocateTextures = Symbol('deallocateTextures');
 const $updateSceneLighting = Symbol('updateSceneLighting');
+const $tonePresetToToneMapping = Symbol('tonePresetToToneMapping');
+const $updateEnvironment = Symbol('updateEnvironment');
+const $cancelUpdateEnvironment = Symbol('cancelUpdateEnvironment');
+
+export const DEFAULT_EXPOSURE = 0.9;
+export const DEFAULT_STAGE_LIGHT_INTENSITY = 1.0;
+
+export const AMBIENT_LIGHT_LOW_INTENSITY = 0.05;
+export const DIRECTIONAL_LIGHT_LOW_INTENSITY = 0.5;
+
+export const AMBIENT_LIGHT_HIGH_INTENSITY = 3.0;
+export const DIRECTIONAL_LIGHT_HIGH_INTENSITY = 0.75;
+
+export const TonePreset = {
+  NONE: 'none',
+  LINEAR: 'linear',
+  REINHARD: 'reinhard',
+  UNCHARTED_2: 'uncharted-2',
+  CINEON: 'cineon',
+  ACES_FILMIC: 'aces-filmic'
+};
 
 export const EnvironmentMixin = (ModelViewerElement) => {
   return class extends ModelViewerElement {
     static get properties() {
       return {
         ...super.properties,
+        tonePreset: {type: String, attribute: 'tone-preset'},
         backgroundImage: {type: String, attribute: 'background-image'},
         backgroundColor: {type: String, attribute: 'background-color'},
-        experimentalPmrem: {type: Boolean, attribute: 'experimental-pmrem'}
+        reflectionImage: {type: String, attribute: 'reflection-image'},
+        reflectionIntensity: {type: Number, attribute: 'reflection-intensity'},
+        stageLightIntensity: {type: Number, attribute: 'stage-light-intensity'},
+        shadowStrength: {type: Number, attribute: 'shadow-strength'},
+        exposure: {type: Number, attribute: 'exposure'},
+        experimentalPmrem: {type: Boolean, attribute: 'experimental-pmrem'},
       };
+    }
+
+    constructor(...args) {
+      super(...args);
+      this.tonePreset = TonePreset.ACES_FILMIC;
+      this.exposure = DEFAULT_EXPOSURE;
+      this.shadowStrength = 0.0;
+      this.stageLightIntensity = DEFAULT_STAGE_LIGHT_INTENSITY;
+
+      this[$cancelUpdateEnvironment] = null;
     }
 
     get[$hasBackgroundImage]() {
@@ -59,25 +97,57 @@ export const EnvironmentMixin = (ModelViewerElement) => {
     update(changedProperties) {
       super.update(changedProperties);
 
+      if (changedProperties.has('stageLightIntensity')) {
+        this[$updateSceneLighting]();
+      }
+
+      if (changedProperties.has('tonePreset') ||
+          changedProperties.has('exposure') ||
+          changedProperties.has('shadowStrength')) {
+        const scene = this[$scene];
+        scene.toneMapping = this[$tonePresetToToneMapping](this.tonePreset);
+        scene.toneMappingExposure = this.exposure;
+        scene.shadow.material.opacity =
+            BASE_SHADOW_OPACITY * this.shadowStrength;
+        this[$needsRender]();
+      }
+
       if (!changedProperties.has('backgroundImage') &&
           !changedProperties.has('backgroundColor') &&
+          !changedProperties.has('reflectionImage') &&
           !changedProperties.has('experimentalPmrem')) {
         return;
       }
 
-      if (this[$hasBackgroundImage]) {
-        this[$setEnvironmentImage](this.backgroundImage);
-      } else if (this[$hasBackgroundColor]) {
-        this[$setEnvironmentColor](this.backgroundColor);
-      } else {
-        this[$setEnvironmentColor](DEFAULT_BACKGROUND_COLOR);
-      }
+      this[$updateEnvironment](
+          this.backgroundImage,
+          this.reflectionImage,
+          this.backgroundColor,
+          this.experimentalPmrem);
     }
 
     firstUpdated(changedProperties) {
       if (!changedProperties.has('backgroundImage') &&
           !changedProperties.has('backgroundColor')) {
         this[$setEnvironmentColor](DEFAULT_BACKGROUND_COLOR);
+      }
+    }
+
+    [$tonePresetToToneMapping](tonePreset) {
+      switch (tonePreset) {
+        case TonePreset.LINEAR:
+          return LinearToneMapping;
+        case TonePreset.NONE:
+          return NoToneMapping;
+        case TonePreset.REINHARD:
+          return ReinhardToneMapping;
+        case TonePreset.UNCHARTED_2:
+          return Uncharted2ToneMapping;
+        case TonePreset.CINEON:
+          return CineonToneMapping;
+        default:
+        case TonePreset.ACES_FILMIC:
+          return ACESFilmicToneMapping;
       }
     }
 
@@ -89,67 +159,58 @@ export const EnvironmentMixin = (ModelViewerElement) => {
       }
     }
 
-    /**
-     * @param {string} url
-     */
-    async[$setEnvironmentImage](url) {
+    async[$updateEnvironment](
+        backgroundUrl, reflectionUrl, backgroundColor, pmrem) {
+      if (this[$cancelUpdateEnvironment] != null) {
+        this[$cancelUpdateEnvironment]();
+        this[$cancelUpdateEnvironment] = null;
+      }
+
       const textureUtils = this[$renderer].textureUtils;
 
       if (textureUtils == null) {
         return;
       }
 
-      const textures = await textureUtils.generateEnvironmentTextures(
-          url, {pmrem: this.experimentalPmrem});
+      try {
+        const {environmentMap, skybox} =
+            await new Promise(async (resolve, reject) => {
+              const texturesLoad = textureUtils.generateEnvironmentAndSkybox(
+                  backgroundUrl, reflectionUrl, {pmrem});
 
-      // If the background image has changed
-      // while fetching textures, abort and defer to that
-      // invocation of this function.
-      if (url !== this.backgroundImage) {
-        return;
+              this[$cancelUpdateEnvironment] = async () => reject(texturesLoad);
+
+              resolve(await texturesLoad);
+            });
+
+        this[$deallocateTextures]();
+
+        if (skybox != null) {
+          this[$scene].background = skybox;
+          this[$setShadowLightColor](WHITE);
+        } else if (backgroundColor) {
+          const parsedColor = new Color(backgroundColor);
+          this[$scene].background = parsedColor;
+          this[$setShadowLightColor](parsedColor);
+        }
+
+        this[$applyEnvironmentMap](environmentMap);
+      } catch (errorOrPromise) {
+        if (errorOrPromise instanceof Error) {
+          this[$applyEnvironmentMap](null);
+          throw errorOrPromise;
+        }
+
+        const {environmentMap, skybox} = await errorOrPromise;
+
+        if (environmentMap != null) {
+          environmentMap.dispose();
+        }
+
+        if (skybox != null) {
+          skybox.dispose();
+        }
       }
-
-      this[$deallocateTextures]();
-
-      // If could not load textures (probably an invalid URL), then abort
-      // after deallocating textures.
-      if (!textures) {
-        this[$applyEnvironmentMap](null);
-        return;
-      }
-
-      const {skybox, environmentMap} = textures;
-
-      this[$scene].background = skybox;
-
-      this[$setShadowLightColor](WHITE);
-
-      this[$applyEnvironmentMap](environmentMap);
-    }
-
-    /**
-     * @param {string} color
-     */
-    [$setEnvironmentColor](color) {
-      const textureUtils = this[$renderer].textureUtils;
-
-      if (textureUtils == null) {
-        return;
-      }
-
-      this[$deallocateTextures]();
-
-      const parsedColor = new Color(color);
-
-      this[$scene].background = parsedColor;
-
-      this[$setShadowLightColor](parsedColor);
-
-      // TODO(#336): can cache this per renderer and color
-      const environmentMap = textureUtils.generateDefaultEnvironmentMap(
-          {pmrem: this.experimentalPmrem});
-
-      this[$applyEnvironmentMap](environmentMap);
     }
 
     /**
@@ -164,19 +225,24 @@ export const EnvironmentMixin = (ModelViewerElement) => {
       this.dispatchEvent(new CustomEvent('environment-changed'));
 
       this[$updateSceneLighting]();
-      this[$needsRender]();
     }
 
     [$updateSceneLighting]() {
       const scene = this[$scene];
 
       if (this.experimentalPmrem) {
-        scene.light.visible = false;
-        scene.shadowLight.intensity = 0.5;
+        scene.light.intensity =
+            AMBIENT_LIGHT_LOW_INTENSITY * this.stageLightIntensity;
+        scene.shadowLight.intensity =
+            DIRECTIONAL_LIGHT_LOW_INTENSITY * this.stageLightIntensity;
       } else {
-        scene.light.visible = true;
-        scene.shadowLight.intensity = 0.75;
+        scene.light.intensity =
+            AMBIENT_LIGHT_HIGH_INTENSITY * this.stageLightIntensity;
+        scene.shadowLight.intensity =
+            DIRECTIONAL_LIGHT_HIGH_INTENSITY * this.stageLightIntensity;
       }
+
+      this[$needsRender]();
     }
 
     [$setShadowLightColor](color) {

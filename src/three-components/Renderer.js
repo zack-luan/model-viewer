@@ -71,12 +71,6 @@ export default class Renderer extends EventDispatcher {
       this.renderer.gammaFactor = GAMMA_FACTOR;
       this.renderer.physicallyCorrectLights = true;
       this.renderer.setPixelRatio(resolveDpr());
-
-      // ACESFilmicToneMapping appears to be the most "saturated",
-      // and similar to Filament's gltf-viewer.
-      this.renderer.toneMapping = ACESFilmicToneMapping;
-      this.renderer.toneMappingExposure = 0.9;
-
     } catch (error) {
       this.context = null;
       console.warn(error);
@@ -174,6 +168,9 @@ export default class Renderer extends EventDispatcher {
         const maxHeight = Math.max(height, this.height);
         this.setRendererSize(maxWidth, maxHeight, false);
       }
+
+      this.renderer.toneMapping = scene.toneMapping;
+      this.renderer.toneMappingExposure = scene.toneMappingExposure;
 
       // Need to set the render target in order to prevent
       // clearing the depth from a different buffer -- possibly

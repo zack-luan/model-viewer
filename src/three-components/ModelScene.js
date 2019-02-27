@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-import {AmbientLight, Box3, Color, DirectionalLight, Mesh, MeshBasicMaterial, Object3D, PerspectiveCamera, Scene, SphereBufferGeometry, Vector3} from 'three';
+import {ACESFilmicToneMapping, AmbientLight, Box3, Color, DirectionalLight, Mesh, MeshBasicMaterial, Object3D, PerspectiveCamera, Scene, SphereBufferGeometry, Vector3} from 'three';
 
 import {resolveDpr} from '../utils.js';
 
@@ -75,6 +75,11 @@ export default class ModelScene extends Scene {
     this.context = canvas.getContext('2d');
     this.renderer = renderer;
     this.scaleType = ScaleTypes.Framed;
+
+    // ACESFilmicToneMapping appears to be the most "saturated",
+    // and similar to Filament-based gltf_renderer.
+    this.toneMapping = ACESFilmicToneMapping;
+    this.toneMappingExposure = 0.9;
 
     this.model = new Model();
     this.shadow = new StaticShadow();

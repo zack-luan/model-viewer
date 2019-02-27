@@ -122,34 +122,102 @@ export default class TextureUtils extends EventDispatcher {
     return texture;
   }
 
-  /**
-   * @param {?boolean} config.pmrem
-   * @return {THREE.Texture}
-   */
-  generateDefaultEnvironmentMap(config = {}) {
-    const mapSize = this.config.synthesizedEnvmapSize;
-    const cubemap = this.environmentMapGenerator.generate(mapSize);
 
-    let environmentMap;
+  async loadEquirectAsCubeMap(url) {
+    let equirect = null;
 
-    if (config.pmrem) {
-      environmentMap = this.pmremPass(
-          cubemap,
-          this.config.defaultEnvironmentPmremSamples,
-          this.config.defaultEnvironmentPmremSize);
-
-      cubemap.dispose();
-    } else {
-      environmentMap = cubemap;
-      environmentMap.userData = {
-        ...userData,
-        ...({
-          mapping: 'Cube',
-        })
-      };
+    try {
+      equirect = await this.load(url);
+      return await this.equirectangularToCubemap(equirect);
+    } finally {
+      equirect.dispose();
     }
+  }
 
-    return environmentMap;
+  /**
+   * @oaram {?boolean} config.pmrem
+   */
+  async generateEnvironmentAndSkybox(
+      skyboxUrl = null, environmentUrl = null, options = {}) {
+    const mapSize = this.config.synthesizedEnvmapSize;
+
+    let skyboxLoads = Promise.resolve(null);
+    let environmentLoads = Promise.resolve(null);
+
+    let skybox = null;
+    let environment = null;
+
+    try {
+      let environmentWasGenerated = false;
+
+      // If we have a skybox URL, attempt to load it as a cubemap
+      if (!!skyboxUrl) {
+        skyboxLoads = this.loadEquirectAsCubeMap(skyboxUrl);
+      }
+
+      // If we have a specific environment URL, attempt to load it as a cubemap
+      // The case for this is that the user intends for the IBL to be different
+      // from the scene background (which may be a skybox or solid color).
+      if (!!environmentUrl) {
+        environmentLoads = this.loadEquirectAsCubeMap(environmentUrl);
+      }
+
+      // In practice, this should be nearly as parallel as Promise.all (which
+      // we don't use since we can't easily destructure here):
+      skybox = await skyboxLoads;
+      environment = await environmentLoads;
+
+      // If environment is still null, then no specific environment URL was
+      // specified
+      if (environment != null) {
+        environment = environment.texture
+      } else {
+        if (skybox != null) {
+          // Infer the environment from the skybox if we have one:
+          environment = skybox.texture;
+        } else {
+          // Otherwise, no skybox URL was specified, so fall back to generating
+          // the environment:
+          // TODO(#336): can cache this per renderer and color
+          environment = this.environmentMapGenerator.generate(mapSize);
+          environmentWasGenerated = true;
+        }
+      }
+
+      if (options.pmrem) {
+        // Apply the PMREM pass to the environment, which produces a distinct
+        // texture from the source:
+        const nonPmremEnvironment = environment;
+        environment = this.pmremPass(
+            nonPmremEnvironment,
+            this.config.defaultEnvironmentPmremSamples,
+            this.config.defaultEnvironmentPmremSize)
+
+        // If the source was generated, then we should dispose of it right away
+        if (environmentWasGenerated) {
+          nonPmremEnvironment.dispose();
+        }
+      } else {
+        environment.userData = {
+          ...userData,
+          ...({
+            mapping: 'Cube',
+          })
+        };
+      }
+
+      return {environmentMap: environment, skybox};
+    } catch (error) {
+      if (skybox != null) {
+        skybox.dispose();
+      }
+
+      if (environment != null) {
+        environment.dispose();
+      }
+
+      throw error;
+    }
   }
 
   /**
@@ -183,47 +251,6 @@ export default class TextureUtils extends EventDispatcher {
     };
 
     return renderTarget.texture;
-  }
-
-  /**
-   * Returns a { skybox, environmentMap } object with the targets/textures
-   * accordingly, or null if cannot generate a texture from
-   * the URL. `skybox` is a WebGLRenderCubeTarget, and `environmentMap`
-   * is a Texture from a WebGLRenderCubeTarget.
-   *
-   * @see equirectangularToCubemap with regard to the THREE types.
-   * @param {string} url
-   * @param {boolean} config.pmrem
-   * @return {Promise<Object|null>}
-   */
-  async generateEnvironmentTextures(url, config = {}) {
-    let equirect, skybox, environmentMap;
-    try {
-      equirect = await this.load(url);
-      skybox = await this.equirectangularToCubemap(equirect);
-
-      if (config.pmrem) {
-        environmentMap = this.pmremPass(
-            skybox.texture, this.config.pmremSamples, this.config.pmremSize);
-      } else {
-        environmentMap = skybox.texture;
-      }
-
-      return {environmentMap, skybox};
-    } catch (error) {
-      if (skybox) {
-        skybox.dispose();
-      }
-      if (environmentMap) {
-        environmentMap.dispose();
-      }
-
-      return null;
-    } finally {
-      if (equirect) {
-        equirect.dispose();
-      }
-    }
   }
 
   dispose() {
