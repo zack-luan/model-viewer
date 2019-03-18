@@ -89,6 +89,7 @@ const $dampeningFactor = Symbol('dampeningFactor');
 const $touchMode = Symbol('touchMode');
 const $previousPosition = Symbol('previousPosition');
 const $canInteract = Symbol('canInteract');
+const $enabled = Symbol('enabled');
 
 // Pointer state
 const $pointerIsDown = Symbol('pointerIsDown');
@@ -155,6 +156,8 @@ export const KeyCode = {
  * ensure that the camera's matrixWorld is in sync before using SmoothControls.
  */
 export class SmoothControls extends EventDispatcher {
+  private[$enabled]: boolean = false;
+
   private[$options]: SmoothControlsOptions;
   private[$upQuaternion]: Quaternion = new Quaternion();
   private[$upQuaternionInverse]: Quaternion = new Quaternion();
@@ -204,18 +207,6 @@ export class SmoothControls extends EventDispatcher {
     this[$onTouchMove] = (event: Event) =>
         this[$handlePointerMove](event as TouchEvent);
 
-    element.addEventListener('mousemove', this[$onMouseMove]);
-    element.addEventListener('mousedown', this[$onMouseDown]);
-    element.addEventListener('wheel', this[$onWheel]);
-    element.addEventListener('keydown', this[$onKeyDown]);
-    element.addEventListener('touchstart', this[$onTouchStart]);
-    element.addEventListener('touchmove', this[$onTouchMove]);
-
-    self.addEventListener('mouseup', this[$onMouseUp]);
-    self.addEventListener('touchend', this[$onTouchEnd]);
-
-    element.style.cursor = 'grab';
-
     this[$previousPosition].copy(this.camera.position);
     this[$positionToSpherical](this.camera.position, this[$spherical]);
     this[$targetSpherical].copy(this[$spherical]);
@@ -225,22 +216,45 @@ export class SmoothControls extends EventDispatcher {
     this.setOrbit();
   }
 
-  /**
-   * Clean up event handlers that are added to the configured element. Invoke
-   * this when getting rid of the controls, otherwise listeners will leak!
-   */
-  dispose() {
-    this.element.removeEventListener('mousemove', this[$onMouseMove]);
-    this.element.removeEventListener('mousedown', this[$onMouseDown]);
-    this.element.removeEventListener('wheel', this[$onWheel]);
-    this.element.removeEventListener('keydown', this[$onKeyDown]);
-    this.element.removeEventListener('touchstart', this[$onTouchStart]);
-    this.element.removeEventListener('touchmove', this[$onTouchMove]);
+  get enabled(): boolean {
+    return this[$enabled];
+  }
 
-    self.removeEventListener('mouseup', this[$onMouseUp]);
-    self.removeEventListener('touchend', this[$onTouchEnd]);
+  enable() {
+    if (this[$enabled] === false) {
+      const {element} = this;
+      element.addEventListener('mousemove', this[$onMouseMove]);
+      element.addEventListener('mousedown', this[$onMouseDown]);
+      element.addEventListener('wheel', this[$onWheel]);
+      element.addEventListener('keydown', this[$onKeyDown]);
+      element.addEventListener('touchstart', this[$onTouchStart]);
+      element.addEventListener('touchmove', this[$onTouchMove]);
 
-    this.element.style.cursor = '';
+      self.addEventListener('mouseup', this[$onMouseUp]);
+      self.addEventListener('touchend', this[$onTouchEnd]);
+
+      this.element.style.cursor = 'grab';
+      this[$enabled] = true;
+    }
+  }
+
+  disable() {
+    if (this[$enabled] === true) {
+      const {element} = this;
+
+      element.removeEventListener('mousemove', this[$onMouseMove]);
+      element.removeEventListener('mousedown', this[$onMouseDown]);
+      element.removeEventListener('wheel', this[$onWheel]);
+      element.removeEventListener('keydown', this[$onKeyDown]);
+      element.removeEventListener('touchstart', this[$onTouchStart]);
+      element.removeEventListener('touchmove', this[$onTouchMove]);
+
+      self.removeEventListener('mouseup', this[$onMouseUp]);
+      self.removeEventListener('touchend', this[$onTouchEnd]);
+
+      element.style.cursor = '';
+      this[$enabled] = false;
+    }
   }
 
   /**
