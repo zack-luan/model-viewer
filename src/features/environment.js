@@ -28,7 +28,6 @@ const WHITE = new Color('#ffffff');
 
 const $currentEnvironmentMap = Symbol('currentEnvironmentMap');
 const $applyEnvironmentMap = Symbol('applyEnvironmentMap');
-const $setShadowLightColor = Symbol('setShadowLightColor');
 const $deallocateTextures = Symbol('deallocateTextures');
 const $updateLighting = Symbol('updateLighting');
 const $updateToneMapping = Symbol('updateToneMapping');
@@ -131,7 +130,6 @@ export const EnvironmentMixin = (ModelViewerElement) => {
 
         if (skybox != null) {
           this[$scene].background = skybox;
-          this[$setShadowLightColor](WHITE);
         } else {
           if (!backgroundColor) {
             backgroundColor = DEFAULT_BACKGROUND_COLOR;
@@ -139,7 +137,6 @@ export const EnvironmentMixin = (ModelViewerElement) => {
 
           const parsedColor = new Color(backgroundColor);
           this[$scene].background = parsedColor;
-          this[$setShadowLightColor](parsedColor);
         }
 
         this[$applyEnvironmentMap](environmentMap);
@@ -194,11 +191,6 @@ export const EnvironmentMixin = (ModelViewerElement) => {
 
       scene.configureStageLighting(this.stageLightIntensity, illuminationRole);
       scene.model.setEnvironmentMapIntensity(this.environmentIntensity);
-    }
-
-    [$setShadowLightColor](color) {
-      this[$scene].shadowLight.color.copy(color);
-      this[$scene].shadowLight.color.lerpHSL(WHITE, 0.5);
     }
 
     [$deallocateTextures]() {
