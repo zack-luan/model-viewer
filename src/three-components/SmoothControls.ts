@@ -15,7 +15,7 @@
 
 import {Event, EventDispatcher, PerspectiveCamera, Quaternion, Spherical, Vector2, Vector3} from 'three';
 
-import {clamp} from '../utilities.js';
+import {clamp, step} from '../utilities.js';
 
 export type EventHandlingBehavior = 'prevent-all'|'prevent-handled';
 export type InteractionPolicy = 'always-allow'|'allow-when-focused';
@@ -38,6 +38,14 @@ export interface SmoothControlsOptions {
   minimumFov?: number;
   // The maximum camera field of view in degrees
   maximumFov?: number;
+  // The distance from the target orbital position where deceleration will begin
+  decelerationMargin?: number;
+  // The rate of acceleration as the camera starts to change orbital position
+  // The value is measured in world-meters-per-frame-per-frame
+  acceleration?: number;
+  // A scalar in 0..1 that changes the dampening factor, corresponding to
+  // factors from 0.05..0.3
+  dampeningScale?: number;
   // Controls when events will be cancelled (always, or only when handled)
   eventHandlingBehavior?: EventHandlingBehavior;
   // Controls when interaction is allowed (always, or only when focused)
@@ -53,6 +61,9 @@ export const DEFAULT_OPTIONS = Object.freeze<SmoothControlsOptions>({
   maximumAzimuthalAngle: Infinity,
   minimumFov: 20,
   maximumFov: 45,
+  decelerationMargin: 0.25,
+  acceleration: 0.15,
+  dampeningScale: 0.5,
   eventHandlingBehavior: 'prevent-all',
   interactionPolicy: 'allow-when-focused'
 });
@@ -108,13 +119,16 @@ const $handleWheel = Symbol('handleWheel');
 const $handleKey = Symbol('handleKey');
 
 // Constants
+const MAXIMUM_DAMPENING_FACTOR = 0.05;
+const MINIMUM_DAMPENING_FACTOR = 0.3;
+const FRAME_MILLISECONDS = 1000.0 / 60.0;
+const ORBIT_STEP_EDGE = 0.001;
 const USER_INTERACTION_CHANGE_SOURCE = 'user-interaction';
 const DEFAULT_INTERACTION_CHANGE_SOURCE = 'none';
 const TOUCH_EVENT_RE = /^touch(start|end|move)$/;
 const KEYBOARD_ORBIT_INCREMENT = Math.PI / 8;
 const DECAY_MILLISECONDS = 50;
-const NATURAL_FREQUENCY = 1 / DECAY_MILLISECONDS;
-const NIL_SPEED = 0.0002 * NATURAL_FREQUENCY;
+const DEFAULT_CAMERA_FOV = 100;
 const TAU = 2 * Math.PI;
 const UP = new Vector3(0, 1, 0);
 
@@ -153,49 +167,60 @@ export class Damper {
 
   update(
       x: number, xGoal: number, timeStepMilliseconds: number,
-      xNormalization: number): number {
-    if (timeStepMilliseconds >= DECAY_MILLISECONDS) {
-      // This clamps at the point where a large time step would cause the
-      // discrete step to overshoot.
-      this[$velocity] = 0;
-      return xGoal;
+      options = DEFAULT_OPTIONS): number {
+    const delta = xGoal - x;
+    const frames = timeStepMilliseconds / FRAME_MILLISECONDS;
+    const distance = Math.abs(delta);
+
+    const applyVelocity = distance > options.decelerationMargin!;
+    const nextVelocity =
+        Math.min(this[$velocity] + options.acceleration! * frames, 1.0);
+
+    if (applyVelocity) {
+      this[$velocity] = nextVelocity;
+    } else if (this[$velocity] > 0) {
+      this[$velocity] = Math.max(nextVelocity, 0.0);
     }
-    if (timeStepMilliseconds < 0) {
-      return x;
+
+    const dampeningFactor = MINIMUM_DAMPENING_FACTOR -
+        options.dampeningScale! *
+            (MINIMUM_DAMPENING_FACTOR - MAXIMUM_DAMPENING_FACTOR)
+
+    const scale =
+        dampeningFactor * (applyVelocity ? this[$velocity] * frames : frames);
+
+    const scaledDelta = scale * delta;
+
+    let increment = step(ORBIT_STEP_EDGE, Math.abs(scaledDelta)) * scaledDelta;
+
+    if (Math.abs(increment) > distance) {
+      increment = delta;
     }
-    // Critically damped
-    const acceleration = NATURAL_FREQUENCY * NATURAL_FREQUENCY * (xGoal - x) -
-        2 * NATURAL_FREQUENCY * this[$velocity];
-    this[$velocity] += acceleration * timeStepMilliseconds;
-    if (Math.abs(this[$velocity]) < NIL_SPEED * xNormalization &&
-        acceleration * (xGoal - x) <= 0) {
-      // This ensures the controls settle and stop calling this function instead
-      // of asymptotically approaching their goal.
-      this[$velocity] = 0;
-      return xGoal;
-    } else {
-      return x + this[$velocity] * timeStepMilliseconds;
-    }
+
+    return x + increment;
   }
 }
+
 
 /**
  * SmoothControls is a Three.js helper for adding delightful pointer and
  * keyboard-based input to a staged Three.js scene. Its API is very similar to
- * OrbitControls, but it offers more opinionated (subjectively more delightful)
- * defaults, easy extensibility and subjectively better out-of-the-box keyboard
- * support.
+ * OrbitControls, but it offers more opinionated (subjectively more
+ * delightful) defaults, easy extensibility and subjectively better
+ * out-of-the-box keyboard support.
  *
  * One important change compared to OrbitControls is that the `update` method
  * of SmoothControls must be invoked on every frame, otherwise the controls
  * will not have an effect.
  *
  * Another notable difference compared to OrbitControls is that SmoothControls
- * does not currently support panning (but probably will in a future revision).
+ * does not currently support panning (but probably will in a future
+ * revision).
  *
- * Like OrbitControls, SmoothControls assumes that the orientation of the camera
- * has been set in terms of position, rotation and scale, so it is important to
- * ensure that the camera's matrixWorld is in sync before using SmoothControls.
+ * Like OrbitControls, SmoothControls assumes that the orientation of the
+ * camera has been set in terms of position, rotation and scale, so it is
+ * important to ensure that the camera's matrixWorld is in sync before using
+ * SmoothControls.
  */
 export class SmoothControls extends EventDispatcher {
   private[$interactionEnabled]: boolean = false;
@@ -257,8 +282,8 @@ export class SmoothControls extends EventDispatcher {
 
     this[$options] = Object.assign({}, DEFAULT_OPTIONS);
 
+    this.setFov(DEFAULT_CAMERA_FOV);
     this.setOrbit(0, Math.PI / 2, 1);
-    this.setFov(100);
     this.jumpToGoal();
   }
 
@@ -325,7 +350,7 @@ export class SmoothControls extends EventDispatcher {
    * Returns the camera's current vertical field of view in degrees.
    */
   getFieldOfView(): number {
-    return this.camera.fov;
+    return this.camera.fov || DEFAULT_CAMERA_FOV;
   }
 
   /**
@@ -469,25 +494,32 @@ export class SmoothControls extends EventDispatcher {
     if (this[$isStationary]()) {
       return;
     }
-    const {maximumPolarAngle, maximumRadius, maximumFov} = this[$options];
 
-    this[$spherical].theta = this[$thetaDamper].update(
-        this[$spherical].theta, this[$goalSpherical].theta, delta, Math.PI);
+    if (delta >= DECAY_MILLISECONDS) {
+      this[$spherical].copy(this[$goalSpherical]);
+      this[$fov] = this[$goalFov];
+    } else {
+      this[$spherical].theta = this[$thetaDamper].update(
+          this[$spherical].theta,
+          this[$goalSpherical].theta,
+          delta,
+          this[$options]);
 
-    this[$spherical].phi = this[$phiDamper].update(
-        this[$spherical].phi,
-        this[$goalSpherical].phi,
-        delta,
-        maximumPolarAngle!);
+      this[$spherical].phi = this[$phiDamper].update(
+          this[$spherical].phi,
+          this[$goalSpherical].phi,
+          delta,
+          this[$options]);
 
-    this[$spherical].radius = this[$radiusDamper].update(
-        this[$spherical].radius,
-        this[$goalSpherical].radius,
-        delta,
-        maximumRadius!);
+      this[$spherical].radius = this[$radiusDamper].update(
+          this[$spherical].radius,
+          this[$goalSpherical].radius,
+          delta,
+          this[$options]);
 
-    this[$fov] =
-        this[$fovDamper].update(this[$fov], this[$goalFov], delta, maximumFov!);
+      this[$fov] = this[$fovDamper].update(
+          this[$fov] || 100, this[$goalFov], delta, this[$options]);
+    }
 
     this[$moveCamera]();
   }
