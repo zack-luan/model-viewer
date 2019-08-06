@@ -352,6 +352,48 @@ uniform bool latitudinal;
 uniform float dTheta;
 ${texelIO}
 ${toneMap}
+vec2 circleShiftX(vec2 xz, float distance, float size){
+  float newX = xz.x + distance;
+  if(abs(newX) <= size){
+    xz.x = newX;
+  }else{
+    newX = (newX + size) * 0.5;
+    float side = floor(newX / size);
+    newX -= side * size;
+    side = mod(side, 4.0);
+    newX = 2.0 * newX - size;
+    if(side == 0.0){
+      xz.x = sign(xz.y) * newX;
+    }else if(side == 1.0){
+      xz.x = xz.y;
+      xz.y = sign(xz.y) * newX;
+    }else if(side == 2.0){
+      xz.y *= -1.0;
+      xz.x = sign(xz.y) * newX;
+    }else if(side == 3.0){
+      xz.x = -xz.y;
+      xz.y = -sign(xz.y) * newX;
+    }
+  }
+  return xz;
+}
+vec3 horizontalShift(vec3 direction, float distance){
+  vec3 absDirection = abs(direction);
+  if(absDirection.y > absDirection.x && absDirection.y > absDirection.z){
+    if(absDirection.x > absDirection.z){
+      direction.xz = circleShiftX(direction.xz, sign(direction.x) * distance, 1.0);
+    }else{
+      direction.zx = circleShiftX(direction.zx, -sign(direction.z) * distance, 1.0);
+    }
+  }else{
+    if(absDirection.x > absDirection.z){
+      direction.xz = circleShiftX(direction.xz, sign(direction.x) * distance, 1.0 - absDirection.x);
+    }else{
+      direction.zx = circleShiftX(direction.zx, -sign(direction.z) * distance, 1.0 - absDirection.z);
+    }
+  }
+  return direction;
+}
 void main() {
   vec4 texColor = vec4(0.0);
   for (int i = 0; i < n; i++) {
