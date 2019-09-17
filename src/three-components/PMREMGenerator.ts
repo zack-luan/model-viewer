@@ -174,7 +174,8 @@ const generateMipmaps =
       cubeCamera.renderTarget.dispose();
       let mipmapShader = new MipmapShader();
       const mipmapScene = new Scene();
-      const boxMesh = new Mesh(new BoxBufferGeometry(), mipmapShader);
+      const boxMesh =
+          new Mesh(new BoxBufferGeometry(1, 1, 1, 1, 1, 1), mipmapShader);
       (boxMesh.material as Material).side = DoubleSide;
       mipmapScene.add(boxMesh);
 

@@ -248,7 +248,7 @@ export default class TextureUtils extends EventDispatcher {
       outputEncoding?: TextureEncoding): WebGLRenderTargetCube {
     const blurScene = new Scene();
 
-    const geometry = new BoxBufferGeometry();
+    const geometry = new BoxBufferGeometry(1, 1, 1, 1, 1, 1);
     geometry.removeAttribute('uv');
 
     const cubeResolution = cubeTarget.width;
