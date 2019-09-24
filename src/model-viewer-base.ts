@@ -350,8 +350,6 @@ export default class ModelViewerElementBase extends UpdatingElement {
 
     this[$loaded] = true;
     this[$loadedTime] = performance.now();
-    // Asynchronously invoke `update`:
-    this.requestUpdate();
   }
 
   [$needsRender]() {

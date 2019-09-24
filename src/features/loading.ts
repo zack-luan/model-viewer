@@ -271,10 +271,9 @@ export const LoadingMixin = <T extends Constructor<ModelViewerElementBase>>(
     [$onProgress](event: Event) {
       const progress = (event as any).detail.totalProgress;
 
-      this.requestUpdate();
-
       if (progress === 1.0) {
         this[$updateProgressBar].flush();
+        this.requestUpdate();
       }
 
       this[$updateProgressBar](progress);
@@ -322,7 +321,6 @@ export const LoadingMixin = <T extends Constructor<ModelViewerElementBase>>(
               'error', {detail: {type: 'preload', sourceError: error}}));
         } finally {
           updatePreloadProgress(1.0);
-          this.requestUpdate();
         }
       }
 
@@ -394,13 +392,6 @@ export const LoadingMixin = <T extends Constructor<ModelViewerElementBase>>(
       const src = this.src;
       return super[$getLoaded]() ||
           !!(src && CachingGLTFLoader.hasFinishedLoading(src));
-    }
-
-    async[$updateSource]() {
-      if (this[$modelIsReadyForReveal]) {
-        this[$sourceUpdated] = true;
-        await super[$updateSource]();
-      }
     }
   }
 
